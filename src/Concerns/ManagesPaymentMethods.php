@@ -62,7 +62,7 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
      */
     public function hasDefaultPaymentMethod(): bool
     {
-        return ! is_null($this->pm_type);
+        return ! is_null($this->default_pm_id) || ! is_null($this->pm_type);
     }
 
     /**
@@ -78,11 +78,27 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
      */
     public function defaultPaymentMethod(): ?PaymentMethod
     {
-        if (! $this->hasDefaultPaymentMethod()) {
+        if (! $this->hasChipId()) {
             return null;
         }
 
-        return $this->paymentMethods()->first();
+        $paymentMethods = $this->paymentMethods();
+
+        if ($paymentMethods->isEmpty()) {
+            return null;
+        }
+
+        if (is_string($this->default_pm_id)) {
+            $preferredPaymentMethod = $paymentMethods->first(
+                fn (PaymentMethod $paymentMethod): bool => $paymentMethod->id() === $this->default_pm_id
+            );
+
+            if ($preferredPaymentMethod instanceof PaymentMethod) {
+                return $preferredPaymentMethod;
+            }
+        }
+
+        return $paymentMethods->first();
     }
 
     /**
@@ -93,8 +109,14 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
         $paymentMethod = $this->findPaymentMethod($paymentMethodId);
 
         if ($paymentMethod) {
+            $paymentMethodData = $paymentMethod->toArray();
+            $brand = $paymentMethod->brand()
+                ?? ($paymentMethodData['card']['brand'] ?? null)
+                ?? ($paymentMethodData['transaction_data']['extra']['card_brand'] ?? null);
+
             $this->forceFill([
-                'pm_type' => $paymentMethod->type(),
+                'default_pm_id' => $paymentMethodId,
+                'pm_type' => is_string($brand) && $brand !== '' ? $brand : $paymentMethod->type(),
                 'pm_last_four' => $paymentMethod->lastFour(),
             ])->save();
         }
@@ -111,11 +133,13 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
 
         if ($defaultMethod) {
             $this->forceFill([
-                'pm_type' => $defaultMethod->type(),
+                'default_pm_id' => $defaultMethod->id(),
+                'pm_type' => $defaultMethod->brand() ?? $defaultMethod->type(),
                 'pm_last_four' => $defaultMethod->lastFour(),
             ])->save();
         } else {
             $this->forceFill([
+                'default_pm_id' => null,
                 'pm_type' => null,
                 'pm_last_four' => null,
             ])->save();
@@ -133,10 +157,12 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
             return;
         }
 
+        $wasDefaultPaymentMethod = $this->default_pm_id === $paymentMethodId;
+
         Cashier::chip()->deleteClientRecurringToken($this->chip_id, $paymentMethodId);
 
         // If this was the default, update it
-        if ($this->hasDefaultPaymentMethod()) {
+        if ($wasDefaultPaymentMethod || $this->hasDefaultPaymentMethod()) {
             $this->updateDefaultPaymentMethodFromChip();
         }
     }
@@ -151,6 +177,7 @@ trait ManagesPaymentMethods // @phpstan-ignore trait.unused
         }
 
         $this->forceFill([
+            'default_pm_id' => null,
             'pm_type' => null,
             'pm_last_four' => null,
         ])->save();

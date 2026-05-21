@@ -779,7 +779,8 @@ class Subscription extends Model
 
         // Calculate the period start based on billing interval
         $interval = $this->billing_interval ?? 'month';
-        $start = $this->next_billing_at->copy()->sub($interval, 1);
+        $intervalCount = $this->billing_interval_count > 0 ? $this->billing_interval_count : 1;
+        $start = $this->next_billing_at->copy()->sub($interval, $intervalCount);
 
         return $timezone ? $start->setTimezone($timezone) : $start;
     }
@@ -1161,20 +1162,21 @@ class Subscription extends Model
                 return;
             }
 
-            if ($subscription->hasOwner()) {
-                return;
-            }
-
             $owner = $subscription->resolveOwner();
 
             if ($owner === null) {
                 return;
             }
 
-            if ($subscription->user_id !== null) {
+            // Validate that billable customer (user_id) belongs to the subscription owner
+            if (
+                (bool) config('cashier-chip.features.owner.validate_billable_owner', true)
+                && $subscription->user_id !== null
+            ) {
                 /** @var class-string<Model> $customerModel */
                 $customerModel = Cashier::$customerModel;
 
+                // Fast-path: if owner is the billable, allow it
                 if (
                     is_a($owner, $customerModel)
                     && (string) $owner->getKey() === (string) $subscription->user_id
@@ -1183,7 +1185,11 @@ class Subscription extends Model
                     // No additional owner-scoped lookup required.
                 } else {
                     if (! method_exists($customerModel, 'scopeForOwner')) {
-                        throw new AuthorizationException('Unable to validate subscription owner against customer model; owner scoping is required.');
+                        if (is_a($owner, $customerModel)) {
+                            throw new AuthorizationException('Cross-tenant subscription write blocked.');
+                        }
+
+                        return;
                     }
 
                     $exists = $customerModel::forOwner($owner, false)
@@ -1196,7 +1202,9 @@ class Subscription extends Model
                 }
             }
 
-            $subscription->assignOwner($owner);
+            if (! $subscription->hasOwner()) {
+                $subscription->assignOwner($owner);
+            }
         });
 
         static::deleting(function (Subscription $subscription): void {
