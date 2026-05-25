@@ -65,7 +65,7 @@ $checkout = $user->checkout(10000, [
 return $checkout->redirect();
 ```
 
-See [Checkout Sessions](checkout.md) for detailed checkout documentation.
+See [Checkout Sessions](07-checkout.md) for detailed checkout documentation.
 
 ## Payment Object
 
