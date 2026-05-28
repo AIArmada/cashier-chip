@@ -8,10 +8,10 @@ Cashier CHIP provides utilities for testing billing functionality.
 
 ## Faking CHIP
 
-Use `CashierChip::fake()` to mock all CHIP API calls:
+Use `Cashier::fake()` to mock all CHIP API calls:
 
 ```php
-use AIArmada\CashierChip\CashierChip;
+use AIArmada\CashierChip\Cashier;
 use Tests\TestCase;
 
 class BillingTest extends TestCase
@@ -20,7 +20,7 @@ class BillingTest extends TestCase
     {
         parent::setUp();
         
-        CashierChip::fake();
+        Cashier::fake();
     }
     
     public function test_user_can_checkout(): void
@@ -125,7 +125,7 @@ $item = SubscriptionItem::factory()
 ```php
 public function test_user_can_subscribe(): void
 {
-    CashierChip::fake();
+    Cashier::fake();
     
     $user = User::factory()->create();
     
@@ -178,7 +178,7 @@ public function test_webhook_updates_payment_status(): void
     // ...
     
     // Simulate webhook
-    $response = $this->postJson('/chip/webhook', [
+    $response = $this->postJson('/chip/webhooks', [
         'event_type' => 'purchase.payment_successful',
         'id' => $purchaseId,
         'client_id' => $user->chipId(),
@@ -199,7 +199,7 @@ public function test_payment_event_is_dispatched(): void
 {
     Event::fake([PaymentSucceeded::class]);
     
-    $this->postJson('/chip/webhook', [
+    $this->postJson('/chip/webhooks', [
         'event_type' => 'purchase.payment_successful',
         'id' => 'purchase-123',
         'status' => 'paid',
@@ -214,7 +214,7 @@ public function test_payment_event_is_dispatched(): void
 ```php
 public function test_user_can_be_charged(): void
 {
-    CashierChip::fake();
+    Cashier::fake();
     
     $user = User::factory()->create();
     $user->updateDefaultPaymentMethod('tok_test');
@@ -230,7 +230,7 @@ public function test_user_can_be_charged(): void
 ```php
 public function test_checkout_redirects(): void
 {
-    CashierChip::fake();
+    Cashier::fake();
     
     $user = User::factory()->create();
     
@@ -294,7 +294,7 @@ public function test_with_mocked_gateway(): void
 // phpunit.xml
 <env name="CHIP_BRAND_ID" value="test-brand"/>
 <env name="CHIP_COLLECT_API_KEY" value="test-secret"/>
-<env name="CHIP_VERIFY_WEBHOOK" value="false"/>
+<env name="CHIP_WEBHOOK_VERIFY_SIGNATURE" value="false"/>
 ```
 
 ## Database Setup

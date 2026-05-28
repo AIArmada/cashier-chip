@@ -11,7 +11,7 @@ Cashier CHIP handles incoming CHIP webhooks to update payment statuses, save rec
 The package registers a webhook route at:
 
 ```
-POST /chip/webhook
+POST /chip/webhooks
 ```
 
 Configure your CHIP dashboard to send webhooks to this URL.
@@ -163,7 +163,7 @@ Register your custom controller:
 // routes/web.php
 use App\Http\Controllers\WebhookController;
 
-Route::post('chip/webhook', [WebhookController::class, 'handleWebhook'])
+Route::post('chip/webhooks', [WebhookController::class, 'handleWebhook'])
     ->name('chip.webhook');
 ```
 
@@ -234,15 +234,15 @@ Configure the ngrok URL in your CHIP dashboard.
 ### Faking Webhooks
 
 ```php
-use AIArmada\CashierChip\CashierChip;
+use AIArmada\CashierChip\Cashier;
 
-CashierChip::fake();
+Cashier::fake();
 
 // Now all CHIP API calls are faked
 $user->charge(10000);
 
 // Simulate a webhook
-$response = $this->postJson('/chip/webhook', [
+$response = $this->postJson('/chip/webhooks', [
     'event_type' => 'purchase.payment_successful',
     'id' => 'purchase-123',
     'status' => 'paid',
@@ -258,11 +258,11 @@ For testing:
 ```php
 // config/cashier-chip.php
 'webhooks' => [
-    'verify_signature' => env('CHIP_VERIFY_WEBHOOK', true),
+    'verify_signature' => env('CHIP_WEBHOOK_VERIFY_SIGNATURE', true),
 ],
 
 // .env.testing
-CHIP_VERIFY_WEBHOOK=false
+CHIP_WEBHOOK_VERIFY_SIGNATURE=false
 ```
 
 ## Webhook Queues

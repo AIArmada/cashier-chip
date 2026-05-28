@@ -147,9 +147,9 @@ If you're using a different model for billing:
 
 ```php
 // In AppServiceProvider::boot()
-use AIArmada\CashierChip\CashierChip;
+use AIArmada\CashierChip\Cashier;
 
-CashierChip::useCustomerModel(Team::class);
+Cashier::useCustomerModel(Team::class);
 ```
 
 The configured billable model only needs the `Billable` trait and a primary key. Cashier CHIP no
@@ -160,7 +160,7 @@ longer requires gateway-specific billing columns on that model.
 The package automatically registers a webhook route at:
 
 ```
-POST /chip/webhook
+POST /chip/webhooks
 ```
 
 Configure your CHIP dashboard to send webhooks to this URL.
