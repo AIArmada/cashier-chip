@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Payment;
 
+use AIArmada\CashierChip\Billing\Cashier;
 use AIArmada\CashierChip\Contracts\BillableContract;
 use AIArmada\CashierChip\Exceptions\IncompletePayment;
 use AIArmada\Chip\Data\PurchaseData;

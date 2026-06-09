@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Billing;
 
 use AIArmada\Vouchers\Data\VoucherData;
 use AIArmada\Vouchers\Enums\VoucherType;

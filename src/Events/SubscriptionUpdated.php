@@ -8,21 +8,13 @@ use AIArmada\CashierChip\Subscription\Subscription;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class SubscriptionCanceled
+class SubscriptionUpdated
 {
     use Dispatchable;
     use SerializesModels;
 
-    /**
-     * The subscription instance.
-     */
     public Subscription $subscription;
 
-    /**
-     * Create a new event instance.
-     *
-     * @return void
-     */
     public function __construct(Subscription $subscription)
     {
         $this->subscription = $subscription;

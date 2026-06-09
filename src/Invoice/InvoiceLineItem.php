@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Invoice;
 
 use AIArmada\Chip\Data\ProductData;
 use Illuminate\Contracts\Support\Arrayable;

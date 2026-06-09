@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Subscription;
 
+use AIArmada\CashierChip\Billing\Cashier;
 use AIArmada\CashierChip\Concerns\InteractsWithPaymentBehavior;
 use AIArmada\CashierChip\Concerns\Prorates;
 use AIArmada\CashierChip\Database\Factories\SubscriptionItemFactory;
@@ -20,12 +21,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Override;
 
 /**
  * CHIP Subscription Item Model
  *
  * @property string $id
  * @property string $subscription_id
+ * @property string|null $owner_type
+ * @property string|null $owner_id
  * @property string $chip_id
  * @property string|null $chip_product
  * @property string|null $chip_price
@@ -57,6 +61,7 @@ class SubscriptionItem extends Model
      */
     protected $guarded = [];
 
+    #[Override]
     public function getTable(): string
     {
         $tables = config('cashier-chip.database.tables', []);
@@ -72,7 +77,7 @@ class SubscriptionItem extends Model
      */
     public function subscription(): BelongsTo
     {
-        /** @var class-string<Model> $model */
+        /** @var class-string<Subscription> $model */
         $model = Cashier::$subscriptionModel;
 
         return $this->belongsTo($model, 'subscription_id');
@@ -82,7 +87,7 @@ class SubscriptionItem extends Model
      * @param  Builder<static>  $query
      * @return Builder<static>
      */
-    final public function scopeForOwner(Builder $query, ?Model $owner = null, ?bool $includeGlobal = null): Builder
+    final public function scopeForOwner(Builder $query, Model | string | null $owner = null, ?bool $includeGlobal = null): Builder
     {
         if (! (bool) config('cashier-chip.features.owner.enabled', true)) {
             return $query;
@@ -168,7 +173,7 @@ class SubscriptionItem extends Model
      *
      * @return $this
      */
-    public function incrementQuantity(int $count = 1)
+    public function incrementQuantity(int $count = 1): static
     {
         $this->updateQuantity($this->quantity + $count);
 
@@ -180,7 +185,7 @@ class SubscriptionItem extends Model
      *
      * @return $this
      */
-    public function decrementQuantity(int $count = 1)
+    public function decrementQuantity(int $count = 1): static
     {
         $this->updateQuantity(max(1, $this->quantity - $count));
 
@@ -192,13 +197,13 @@ class SubscriptionItem extends Model
      *
      * @return $this
      */
-    public function updateQuantity(int $quantity)
+    public function updateQuantity(int $quantity): static
     {
         $this->subscription->guardAgainstIncomplete();
 
         $quantity = max(1, $quantity);
 
-        return DB::transaction(function () use ($quantity) {
+        return DB::transaction(function () use ($quantity): static {
             $this->fill([
                 'quantity' => $quantity,
             ])->save();
@@ -216,9 +221,10 @@ class SubscriptionItem extends Model
     /**
      * Swap the subscription item to a new price.
      *
+     * @param  array<string, mixed>  $options
      * @return $this
      */
-    public function swap(string $price, array $options = [])
+    public function swap(string $price, array $options = []): static
     {
         $this->subscription->guardAgainstIncomplete();
 
@@ -228,7 +234,7 @@ class SubscriptionItem extends Model
             throw new InvalidArgumentException('Subscription item unit amount must be a non-negative integer.');
         }
 
-        return DB::transaction(function () use ($price, $options) {
+        return DB::transaction(function () use ($price, $options): static {
             $this->fill([
                 'chip_product' => $options['product'] ?? $this->chip_product,
                 'chip_price' => $price,
@@ -272,9 +278,9 @@ class SubscriptionItem extends Model
     /**
      * Create a new factory instance for the model.
      *
-     * @return Factory
+     * @return Factory<SubscriptionItem>
      */
-    protected static function newFactory()
+    protected static function newFactory(): Factory
     {
         return SubscriptionItemFactory::new();
     }

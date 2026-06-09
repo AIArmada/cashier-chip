@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Payment;
 
 use AIArmada\CashierChip\Contracts\PaymentMethodStoreInterface;
 use AIArmada\CommerceSupport\Support\OwnerContext;

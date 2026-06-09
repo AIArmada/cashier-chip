@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Billing;
 
 use AIArmada\CashierChip\Contracts\BillableContract;
 use AIArmada\CashierChip\Contracts\PaymentMethodStoreInterface;
+use AIArmada\CashierChip\Subscription\Subscription;
+use AIArmada\CashierChip\Subscription\SubscriptionItem;
 use AIArmada\CashierChip\Testing\FakeChipClient;
 use AIArmada\CashierChip\Testing\FakeChipCollectService;
 use AIArmada\Chip\Contracts\ChipCustomerDirectoryInterface;

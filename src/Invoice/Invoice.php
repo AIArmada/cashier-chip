@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Invoice;
 
 use AIArmada\CashierChip\Contracts\BillableContract;
+use AIArmada\CashierChip\Contracts\InvoiceRenderer;
 use AIArmada\Chip\Data\ProductData;
 use AIArmada\Chip\Data\PurchaseData;
 use Carbon\CarbonImmutable;
@@ -344,7 +345,7 @@ class Invoice implements Arrayable, Jsonable, JsonSerializable
      */
     public function pdf(array $data = []): string
     {
-        $renderer = app(Contracts\InvoiceRenderer::class);
+        $renderer = app(InvoiceRenderer::class);
 
         if ($renderer === null) {
             throw new RuntimeException(

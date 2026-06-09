@@ -2,14 +2,18 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Subscription;
 
+use AIArmada\CashierChip\Actions\CreateChipSubscription;
+use AIArmada\CashierChip\Billing\Checkout;
+use AIArmada\CashierChip\Billing\Coupon;
 use AIArmada\CashierChip\Concerns\AllowsCoupons;
 use AIArmada\CashierChip\Concerns\HandlesPaymentFailures;
 use AIArmada\CashierChip\Concerns\InteractsWithPaymentBehavior;
 use AIArmada\CashierChip\Concerns\Prorates;
 use AIArmada\CashierChip\Contracts\BillableContract;
 use AIArmada\CommerceSupport\Support\OwnerContext;
+use AIArmada\Vouchers\Services\VoucherService;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use DateTimeInterface;
@@ -17,8 +21,6 @@ use Exception;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Conditionable;
 use InvalidArgumentException;
 
@@ -36,6 +38,7 @@ class SubscriptionBuilder
     /**
      * @phpstan-var Model&BillableContract
      */
+    /** @var Model&BillableContract */
     protected Model $owner;
 
     /**
@@ -292,98 +295,13 @@ class SubscriptionBuilder
      */
     public function create(?string $recurringToken = null, array $options = []): Subscription
     {
-        if (empty($this->items)) {
-            throw new Exception('At least one price is required when starting subscriptions.');
-        }
-
-        // Ensure the customer exists in CHIP before creating the local subscription.
-        if (method_exists($this->owner, 'createOrGetChipCustomer') && ! $this->owner->hasChipId()) {
-            $this->owner->createOrGetChipCustomer();
-        }
-
-        // Validate coupon if provided
-        $couponId = $this->couponId ?? $this->promotionCodeId;
-        $couponDiscount = 0;
-        $couponDuration = null;
-
-        if ($couponId) {
-            $this->validateCouponForSubscriptionApplication($couponId);
-
-            $coupon = $this->retrieveCoupon($couponId);
-
-            if ($coupon) {
-                $totalAmount = $this->calculateTotalAmount();
-                $couponDiscount = $coupon->calculateDiscount($totalAmount);
-                $couponDuration = $coupon->duration();
-            }
-        }
-
-        // Calculate the next billing date
-        $nextBillingAt = $this->calculateNextBillingDate();
-
-        // Calculate trial end
-        $trialEndsAt = ! $this->skipTrial ? $this->trialExpires : null;
-
-        // If there's a trial, set next billing to after trial
-        if ($trialEndsAt) {
-            $nextBillingAt = $trialEndsAt->copy()->add($this->billingInterval, $this->billingIntervalCount);
-        }
-
-        // Determine initial status
-        $status = $trialEndsAt ? Subscription::STATUS_TRIALING : Subscription::STATUS_ACTIVE;
-
-        // Get the first item to set on subscription
-        $firstItem = Arr::first($this->items);
-        $isSinglePrice = count($this->items) === 1;
-
-        return DB::transaction(function () use ($status, $trialEndsAt, $nextBillingAt, $recurringToken, $firstItem, $isSinglePrice, $couponId, $couponDiscount, $couponDuration): Subscription {
-            $ownerAttributes = $this->resolveTenantOwnerAttributes();
-
-            /** @var Subscription $subscription */
-            $subscription = $this->owner->subscriptions()->create([
-                ...$ownerAttributes,
-                'type' => $this->type,
-                'chip_id' => Str::uuid()->toString(),
-                'chip_status' => $status,
-                'chip_price' => $isSinglePrice ? ($firstItem['price'] ?? null) : null,
-                'quantity' => $isSinglePrice ? ($firstItem['quantity'] ?? 1) : null,
-                'trial_ends_at' => $trialEndsAt,
-                'next_billing_at' => $nextBillingAt,
-                'billing_interval' => $this->billingInterval,
-                'billing_interval_count' => $this->billingIntervalCount,
-                'recurring_token' => $recurringToken ?? $this->owner->defaultPaymentMethod()?->id(),
-                'ends_at' => null,
-                'coupon_id' => $couponId,
-                'coupon_discount' => $couponDiscount,
-                'coupon_duration' => $couponDuration,
-                'coupon_applied_at' => $couponId ? Carbon::now() : null,
-            ]);
-
-            // Create subscription items
-            foreach ($this->items as $item) {
-                $subscription->items()->create([
-                    ...$ownerAttributes,
-                    'chip_id' => Str::uuid()->toString(),
-                    'chip_product' => $item['product'] ?? null,
-                    'chip_price' => $item['price'] ?? null,
-                    'quantity' => $item['quantity'] ?? 1,
-                    'unit_amount' => $item['unit_amount'] ?? null,
-                ]);
-            }
-
-            // Record coupon usage
-            if ($couponId && $couponDiscount > 0) {
-                $this->recordCouponUsage($couponId, $couponDiscount, $this->owner);
-            }
-
-            return $subscription;
-        });
+        return app(CreateChipSubscription::class)->create($this, $recurringToken, $options);
     }
 
     /**
      * @return array{owner_type?: string, owner_id?: string}
      */
-    private function resolveTenantOwnerAttributes(): array
+    protected function resolveTenantOwnerAttributes(): array
     {
         if (! (bool) config('cashier-chip.features.owner.enabled', true)) {
             return [];
@@ -549,6 +467,77 @@ class SubscriptionBuilder
     public function getMetadata(): array
     {
         return $this->metadata;
+    }
+
+    /**
+     * Get the owner (billable) model.
+     *
+     * @return Model&BillableContract
+     */
+    public function getOwner(): Model
+    {
+        return $this->owner;
+    }
+
+    /**
+     * Get the coupon ID.
+     */
+    public function getCouponId(): ?string
+    {
+        return $this->couponId;
+    }
+
+    /**
+     * Get the promotion code ID.
+     */
+    public function getPromotionCodeId(): ?string
+    {
+        return $this->promotionCodeId;
+    }
+
+    /**
+     * Get the total amount calculated from all items.
+     */
+    public function getTotalAmount(): int
+    {
+        return $this->calculateTotalAmount();
+    }
+
+    /**
+     * Get the next billing date.
+     */
+    public function getNextBillingDate(): CarbonInterface
+    {
+        return $this->calculateNextBillingDate();
+    }
+
+    /**
+     * Get tenant owner attributes for subscription creation.
+     *
+     * @return array{owner_type?: string, owner_id?: string}
+     */
+    public function getTenantOwnerAttributes(): array
+    {
+        return $this->resolveTenantOwnerAttributes();
+    }
+
+    /**
+     * Retrieve a coupon by its ID.
+     */
+    public function retrieveCoupon(string $couponId): ?Coupon
+    {
+        if (! class_exists(VoucherService::class)) {
+            return null;
+        }
+
+        $service = app(VoucherService::class);
+        $voucherData = $service->find($couponId);
+
+        if (! $voucherData) {
+            return null;
+        }
+
+        return new Coupon($voucherData);
     }
 
     /**

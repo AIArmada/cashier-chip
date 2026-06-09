@@ -2,13 +2,20 @@
 
 declare(strict_types=1);
 
-namespace AIArmada\CashierChip;
+namespace AIArmada\CashierChip\Subscription;
 
+use AIArmada\CashierChip\Billing\Cashier;
+use AIArmada\CashierChip\Billing\Coupon;
+use AIArmada\CashierChip\Billing\Discount;
 use AIArmada\CashierChip\Concerns\HandlesPaymentFailures;
 use AIArmada\CashierChip\Concerns\InteractsWithPaymentBehavior;
 use AIArmada\CashierChip\Concerns\Prorates;
 use AIArmada\CashierChip\Contracts\BillableContract;
 use AIArmada\CashierChip\Database\Factories\SubscriptionFactory;
+use AIArmada\CashierChip\Exceptions\InvalidCoupon;
+use AIArmada\CashierChip\Exceptions\SubscriptionUpdateFailure;
+use AIArmada\CashierChip\Invoice\Invoice;
+use AIArmada\CashierChip\Payment\Payment;
 use AIArmada\CommerceSupport\Support\OwnerContext;
 use AIArmada\CommerceSupport\Traits\HasOwner;
 use AIArmada\CommerceSupport\Traits\HasOwnerScopeConfig;
@@ -898,7 +905,7 @@ class Subscription extends Model
     /**
      * Apply a coupon to the subscription.
      *
-     * @throws Exceptions\InvalidCoupon
+     * @throws InvalidCoupon
      */
     public function applyCoupon(string $couponId): void
     {
@@ -907,7 +914,7 @@ class Subscription extends Model
         $coupon = $this->retrieveCoupon($couponId);
 
         if (! $coupon) {
-            throw Exceptions\InvalidCoupon::notFound($couponId);
+            throw InvalidCoupon::notFound($couponId);
         }
 
         $totalAmount = $this->calculateSubscriptionAmount();
@@ -975,14 +982,14 @@ class Subscription extends Model
      *
      * @return $this
      *
-     * @throws Exceptions\SubscriptionUpdateFailure
+     * @throws SubscriptionUpdateFailure
      */
     public function addPrice(string $price, ?int $quantity = 1, array $options = []): static
     {
         $this->guardAgainstIncomplete();
 
         if ($this->items->contains('chip_price', $price)) {
-            throw Exceptions\SubscriptionUpdateFailure::duplicatePrice($this, $price);
+            throw SubscriptionUpdateFailure::duplicatePrice($this, $price);
         }
 
         $this->items()->create([
@@ -1012,12 +1019,12 @@ class Subscription extends Model
      *
      * @return $this
      *
-     * @throws Exceptions\SubscriptionUpdateFailure
+     * @throws SubscriptionUpdateFailure
      */
     public function removePrice(string $price): static
     {
         if ($this->hasSinglePrice()) {
-            throw Exceptions\SubscriptionUpdateFailure::cannotDeleteLastPrice($this);
+            throw SubscriptionUpdateFailure::cannotDeleteLastPrice($this);
         }
 
         $this->items()->where('chip_price', $price)->delete();
@@ -1122,12 +1129,12 @@ class Subscription extends Model
     /**
      * Make sure a subscription is not incomplete when performing changes.
      *
-     * @throws Exceptions\SubscriptionUpdateFailure
+     * @throws SubscriptionUpdateFailure
      */
     public function guardAgainstIncomplete(): void
     {
         if ($this->incomplete()) {
-            throw Exceptions\SubscriptionUpdateFailure::incompleteSubscription($this);
+            throw SubscriptionUpdateFailure::incompleteSubscription($this);
         }
     }
 
@@ -1258,22 +1265,22 @@ class Subscription extends Model
     /**
      * Validate that a coupon can be applied to the subscription.
      *
-     * @throws Exceptions\InvalidCoupon
+     * @throws InvalidCoupon
      */
     protected function validateCouponForApplication(string $couponId): void
     {
         $coupon = $this->retrieveCoupon($couponId);
 
         if (! $coupon) {
-            throw Exceptions\InvalidCoupon::notFound($couponId);
+            throw InvalidCoupon::notFound($couponId);
         }
 
         if (! $coupon->isValid()) {
-            throw Exceptions\InvalidCoupon::inactive($couponId);
+            throw InvalidCoupon::inactive($couponId);
         }
 
         if ($coupon->isForeverAmountOff()) {
-            throw Exceptions\InvalidCoupon::cannotApplyForeverAmountOffToSubscription($couponId);
+            throw InvalidCoupon::cannotApplyForeverAmountOffToSubscription($couponId);
         }
     }
 
