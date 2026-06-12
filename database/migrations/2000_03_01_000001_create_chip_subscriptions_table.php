@@ -36,6 +36,11 @@ return new class extends Migration
                 $table->timestampTz('trial_ends_at')->nullable();
                 $table->timestampTz('next_billing_at')->nullable();
                 $table->timestampTz('ends_at')->nullable();
+                $table->timestampTz('canceled_at')->nullable();
+                $table->timestampTz('paused_at')->nullable();
+                $table->timestampTz('past_due_at')->nullable();
+                $table->timestampTz('trial_started_at')->nullable();
+                $table->timestampTz('renewed_at')->nullable();
                 $table->string('coupon_id')->nullable();
                 $table->integer('coupon_discount')->nullable();
                 $table->string('coupon_duration')->nullable();
