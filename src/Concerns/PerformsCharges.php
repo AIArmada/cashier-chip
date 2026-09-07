@@ -8,9 +8,11 @@ use AIArmada\CashierChip\Billing\Cashier;
 use AIArmada\CashierChip\Billing\Checkout;
 use AIArmada\CashierChip\Exceptions\IncompletePayment;
 use AIArmada\CashierChip\Payment\Payment;
+use AIArmada\Chip\Builders\PurchaseBuilder;
 use AIArmada\Chip\Data\PaymentData;
 use AIArmada\Chip\Data\PurchaseData;
 use Illuminate\Support\Facades\RateLimiter;
+use InvalidArgumentException;
 use SensitiveParameter;
 use Throwable;
 
@@ -25,6 +27,8 @@ trait PerformsCharges // @phpstan-ignore trait.unused
      */
     public function charge(int $amount, #[SensitiveParameter] ?string $recurringToken = null, array $options = []): Payment
     {
+        Cashier::assertAmountWithinBounds($amount);
+
         $rateLimitKey = 'cashier-chip:charge:' . ($this->chipId() ?? $this->getKey());
         $executed = RateLimiter::attempt(
             key: $rateLimitKey,
@@ -53,6 +57,7 @@ trait PerformsCharges // @phpstan-ignore trait.unused
 
         $builder = Cashier::chip()->purchase()
             ->currency($currency);
+        $builder = $this->applyIdempotencyKey($builder, $options);
 
         // Add the product
         $productName = $options['product_name'] ?? 'One-time charge';
@@ -140,6 +145,8 @@ trait PerformsCharges // @phpstan-ignore trait.unused
      */
     public function createPayment(int $amount, array $options = []): Payment
     {
+        Cashier::assertAmountWithinBounds($amount);
+
         $metadata = $this->billableMetadata($options['metadata'] ?? null);
         $currency = $options['currency'] ?? $this->preferredCurrency();
         $currency = is_string($currency) && $currency !== ''
@@ -148,6 +155,7 @@ trait PerformsCharges // @phpstan-ignore trait.unused
 
         $builder = Cashier::chip()->purchase()
             ->currency($currency);
+        $builder = $this->applyIdempotencyKey($builder, $options);
 
         // Add the product
         $productName = $options['product_name'] ?? 'Payment';
@@ -215,6 +223,24 @@ trait PerformsCharges // @phpstan-ignore trait.unused
     }
 
     /**
+     * @param  array<string, mixed>  $options
+     */
+    private function applyIdempotencyKey(PurchaseBuilder $builder, array $options): PurchaseBuilder
+    {
+        $idempotencyKey = $options['idempotency_key'] ?? null;
+
+        if ($idempotencyKey === null) {
+            return $builder;
+        }
+
+        if (! is_string($idempotencyKey) || mb_trim($idempotencyKey) === '') {
+            throw new InvalidArgumentException('The idempotency_key option must be a non-empty string.');
+        }
+
+        return $builder->idempotencyKey($idempotencyKey);
+    }
+
+    /**
      * Charge using a recurring token (for subscription renewals, etc.).
      *
      * @param  array<string, mixed>  $options
@@ -246,6 +272,8 @@ trait PerformsCharges // @phpstan-ignore trait.unused
      */
     public function checkout(int $amount, array $sessionOptions = [], array $customerOptions = []): Checkout
     {
+        Cashier::assertAmountWithinBounds($amount);
+
         return Checkout::customer($this)->create($amount, array_merge($sessionOptions, $customerOptions));
     }
 
@@ -262,9 +290,14 @@ trait PerformsCharges // @phpstan-ignore trait.unused
         array $sessionOptions = [],
         array $customerOptions = []
     ): Checkout {
+        Cashier::assertAmountWithinBounds($amount);
+
+        $quantity = max(1, $quantity);
+        Cashier::assertAmountWithinBounds($amount * $quantity);
+
         return Checkout::customer($this)
             ->addProduct($name, $amount, $quantity)
-            ->create($amount * max(1, $quantity), array_merge($sessionOptions, $customerOptions));
+            ->create($amount * $quantity, array_merge($sessionOptions, $customerOptions));
     }
 
     /**
