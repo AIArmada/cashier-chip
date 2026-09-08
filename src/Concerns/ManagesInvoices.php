@@ -31,7 +31,8 @@ trait ManagesInvoices // @phpstan-ignore trait.unused
             return collect();
         }
 
-        // Get all subscriptions and their invoices
+        $this->loadMissing('subscriptions.items', 'subscriptions.billable');
+
         $invoices = collect();
 
         foreach ($this->subscriptions as $subscription) {
@@ -64,6 +65,17 @@ trait ManagesInvoices // @phpstan-ignore trait.unused
                 $purchase = PurchaseData::from($purchaseData);
             } else {
                 $purchase = $purchaseData;
+            }
+
+            $purchaseClientId = $purchase->getClientId();
+            $billableChipId = $this->chipId();
+
+            if (! is_string($purchaseClientId)
+                || mb_trim($purchaseClientId) === ''
+                || ! is_string($billableChipId)
+                || mb_trim($billableChipId) === ''
+                || $purchaseClientId !== $billableChipId) {
+                return null;
             }
 
             return new Invoice($this, $purchase);
