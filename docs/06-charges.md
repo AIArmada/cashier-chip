@@ -6,7 +6,10 @@ title: One-off Charges
 
 Process single payments without creating subscriptions.
 
-The canonical way to charge a customer is via the `ChargeChipCustomer` Action. All `$user->charge()` calls delegate to it internally.
+`ChargeChipCustomer` is the action used by the renewal command, not by `$user->charge()`. A
+one-off charge goes straight to the gateway through the `PerformsCharges` trait, which builds
+the purchase itself and calls `chargePurchase()` on it. Use `ChargeChipCustomer` when you want
+the same customer-linking and payment-method bookkeeping the renewal path performs.
 
 ```php
 use AIArmada\CashierChip\Actions\ChargeChipCustomer;
@@ -24,7 +27,7 @@ $payment = ChargeChipCustomer::run(
 ### Charge with Default Payment Method
 
 ```php
-// Charge 100.00 MYR (amounts are in cents)
+// Charge 100.00 MYR (amounts are in minor units)
 $payment = $user->charge(10000);
 
 // Check payment status
@@ -36,12 +39,14 @@ if ($payment->isSucceeded()) {
 ### Charge with Description
 
 ```php
-$payment = $user->charge(10000, null, [
+$payment = $user->charge(10000, options: [
     'reference' => 'Product Purchase - Order #123',
 ]);
 ```
 
 ### Charge with Specific Payment Method
+
+The recurring token is the **second positional argument**, not an option key:
 
 ```php
 $payment = $user->charge(10000, $recurringToken);
@@ -92,12 +97,17 @@ $id = $payment->id();
 $status = $payment->status();
 
 // Check status methods
-$payment->isSucceeded();    // Payment completed
-$payment->isPending();      // Awaiting payment
-$payment->isFailed();       // Payment failed
+$payment->isSucceeded();    // paid | cleared | settled
+$payment->isPending();      // awaiting customer action
+$payment->isFailed();       // error | blocked
+$payment->isExpired();      // status is exactly 'expired'
+$payment->isRefunded();     // status is exactly 'refunded'
 
-// Get amount (in cents)
+// Get amount (integer minor units)
 $amount = $payment->rawAmount();
+
+// Get the formatted amount (e.g. "RM 100.00")
+$display = $payment->amount();
 
 // Get checkout URL (for redirect payments)
 $url = $payment->checkoutUrl();
@@ -108,26 +118,37 @@ $purchase = $payment->asChipPurchase();
 
 ## Payment Statuses
 
-| Status | Description |
-|--------|-------------|
-| `paid` | Payment completed successfully |
-| `pending` | Awaiting customer action |
-| `error` | Payment failed |
-| `expired` | Payment link expired |
-| `refunded` | Payment was refunded |
+`$payment->status()` returns the raw CHIP purchase status string. The predicates group them like this:
+
+| Predicate | Raw statuses |
+|-----------|--------------|
+| `isSucceeded()` | `paid`, `cleared`, `settled` |
+| `isPending()` | `created`, `sent`, `viewed`, `overdue`, `pending_execute`, `pending_capture`, `pending_charge`, `pending_refund`, `pending_release` |
+| `isFailed()` | `error`, `blocked` |
+| `isExpired()` | `expired` |
+| `isRefunded()` | `refunded` |
+| `isCancelled()` | `cancelled`, `released` |
+| `requiresCapture()` | `hold` |
 
 ## Handling Failures
+
+Charges with a recurring token validate the purchase and throw `IncompletePayment` when it did not
+succeed. Charges without a token never throw on status — check the payment instead.
 
 ```php
 use AIArmada\CashierChip\Exceptions\IncompletePayment;
 
 try {
-    $payment = $user->charge(10000);
+    $payment = $user->charge(10000, $recurringToken);
 } catch (IncompletePayment $e) {
     // Handle payment failure
     $message = $e->getMessage();
 }
 ```
+
+> **info**
+> `charge()` and `ChargeChipCustomer` also throw `IncompletePayment` when the per-minute rate limit
+> (`cashier-chip.rate_limits.charges_per_minute`) is exhausted.
 
 ## Refunds
 
@@ -139,7 +160,7 @@ use AIArmada\CashierChip\Actions\RefundChipPayment;
 // Full refund
 RefundChipPayment::run($purchaseId);
 
-// Partial refund (50.00 MYR in cents)
+// Partial refund (50.00 MYR in minor units)
 RefundChipPayment::run($purchaseId, 5000);
 ```
 
@@ -149,30 +170,18 @@ CHIP refunds can also be processed through the CHIP dashboard or lower-level API
 // Using the CHIP package directly
 use AIArmada\Chip\Facades\Chip;
 
-Chip::refundPurchase($purchaseId, 5000); // Partial refund in cents
+Chip::refundPurchase($purchaseId, 5000); // Partial refund in minor units
 ```
 
 ## Receipts
 
-Configure automatic receipt sending:
-
-```php
-$payment = $user->charge(10000, null, [
-    'send_receipt' => true,
-]);
-```
-
-Or send manually after payment:
-
-```php
-use AIArmada\Chip\Facades\Chip;
-
-Chip::resendInvoice($purchaseId);
-```
+`send_receipt` is a checkout option, not a charge option — `charge()` ignores it. To have CHIP email
+a receipt, create a checkout with `send_receipt` enabled (see [Checkout Sessions](07-checkout.md)).
+There is no `sendReceipt()` method on the CHIP facade; receipt sending is a per-purchase flag.
 
 ## Currency
 
-All amounts are in the smallest currency unit (cents for MYR):
+All amounts are in the smallest currency unit (minor units for MYR):
 
 | Display Amount | Code Amount |
 |----------------|-------------|
@@ -186,5 +195,7 @@ Format amounts for display:
 use AIArmada\CommerceSupport\Support\MoneyFormatter;
 
 $formatted = MoneyFormatter::formatMinor(10000, 'MYR');
-// "RM 100.00"
 ```
+
+Never divide by 100 yourself. The minor-unit precision is currency-specific
+(`MoneyFormatter::precisionFor()`); JPY has 0, USD/MYR have 2.

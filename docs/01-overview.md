@@ -42,13 +42,13 @@ patterns on top of `aiarmada/chip`.
 ```
 src/
 ├── Actions/          # ChargeChipCustomer, RefundChipPayment, CreateChipSubscription,
-│                     # CancelChipSubscription, SyncChipPurchaseStatus, ClaimRenewalAttempt
+│                     # CancelChipSubscription, ClaimRenewalAttempt, SyncChipPurchaseStatus
 ├── Billing/          # Billable, Cashier, Checkout, Coupon, Discount, PromotionCode
 ├── Payment/          # Payment, PaymentMethod, PaymentMethodStore, StoredPaymentMethod,
 │                     # InvoicePayment
 ├── Subscription/    # Subscription, SubscriptionBuilder, SubscriptionItem, RenewalAttempt
 ├── Invoice/         # Invoice, InvoiceLineItem
-├── Console/         # RenewSubscriptionsCommand, WebhookCommand
+├── Console/         # RenewSubscriptionsCommand
 ├── Contracts/       # BillableContract, etc.
 ├── Events/          # SubscriptionCreated, PaymentSucceeded, etc.
 ├── Exceptions/

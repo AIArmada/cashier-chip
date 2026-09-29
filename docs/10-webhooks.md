@@ -4,82 +4,110 @@ title: Webhooks
 
 # Webhooks
 
-Cashier CHIP handles incoming CHIP webhooks to update payment statuses, save recurring tokens, and manage subscription states.
+Cashier CHIP has no webhook endpoint of its own. It reacts to the `aiarmada/chip` webhook flow:
+CHIP owns the route, controller, signature verification, and replay handling, and Cashier CHIP
+subscribes to the Laravel events the CHIP package dispatches to update payment statuses, save
+recurring tokens, and manage subscription states.
 
 ## Webhook Route
 
-The `aiarmada/chip` package registers a webhook route at:
+`aiarmada/chip` registers the webhook route:
 
 ```
-POST /chip/webhooks
+POST /chip/webhooks   (route name: chip.webhook)
 ```
 
-Configure your CHIP dashboard to send webhooks to this URL. Cashier CHIP
-registers no webhook route or controller of its own; it subscribes to the
+The path comes from `chip.webhooks.route` (`CHIP_WEBHOOK_ROUTE`, default `/chip/webhooks`).
+Point your CHIP dashboard at that URL.
+Cashier CHIP registers no webhook route or controller of its own; it subscribes to the
 typed events CHIP dispatches from that route (see Handled Events below).
 
 ## Configuration
 
 ### CSRF Protection
 
-Exclude the webhook route from CSRF verification:
-
-```php
-// bootstrap/app.php (Laravel 11+)
-->withMiddleware(function (Middleware $middleware) {
-    $middleware->validateCsrfTokens(except: [
-        'chip/*',
-    ]);
-})
-```
-
-### Webhook Secret
-
-Configure the webhook secret in your `.env`:
-
-```env
-CHIP_WEBHOOK_SECRET=your-webhook-secret
-```
+No action needed. The route runs the `api` middleware group
+(`chip.webhooks.middleware` = `['api', 'throttle:120,1']`), which is CSRF-free by default.
 
 ### Signature Verification
 
-Enable/disable signature verification:
+CHIP verification is **asymmetric**: the signature is verified against CHIP's RSA public key, not a
+shared secret.
+
+- Header: `X-Signature` (base64-encoded)
+- Algorithm: `OPENSSL_ALGO_SHA256` over the **raw request body** (`$request->getContent()`), never
+  the parsed JSON
+- Public key: `chip.collect.public_key` if configured, otherwise fetched from CHIP's
+  `GET /public_key/` and cached. Per-webhook keys can be supplied through
+  `chip.collect.webhook_keys`
 
 ```php
-// config/cashier-chip.php (stored for display; verification lives in the chip package)
-'webhooks' => [
-    'secret' => env('CHIP_WEBHOOK_SECRET'),
-],
-
 // config/chip.php (the chip package owns signature verification)
 'webhooks' => [
-    'verify_signature' => true,  // Set to false for testing
+    'verify_signature' => env('CHIP_WEBHOOK_VERIFY_SIGNATURE', true),
 ],
 ```
 
+> **warning**
+> Setting `chip.webhooks.verify_signature` to `false` only works outside production. In production
+> the validator logs an error and rejects the request with `401` even when the flag is disabled.
+
+> **info**
+> `cashier-chip.webhooks.secret` (`CHIP_WEBHOOK_SECRET`) exists in `config/cashier-chip.php` but is
+> never read. It is inert — CHIP signature verification uses a public key, not a shared secret.
+
+### Timestamp Tolerance
+
+There is no timestamp or nonce check. CHIP's signature covers the raw body only, so replay
+protection comes from webhook deduplication, not from a freshness window.
+
+### Replay and Idempotency
+
+Two layers:
+
+1. `chip.webhooks.store_webhooks` / `chip.webhooks.deduplication` (both default `true`) claim an
+   `idempotency_key` per delivery. A redelivery whose key is already processed is dropped before any
+   handler runs.
+2. `SyncChipPurchaseStatus` additionally short-circuits on a `purchase_id` already recorded as a
+   `completed` `RenewalAttempt`, so a re-delivered purchase cannot double-apply a subscription
+   state change.
+
 ## Handled Events
 
-The package subscribes to these typed CHIP events:
+Cashier CHIP registers three listeners on CHIP's events
+(`packages/cashier-chip/src/CashierChipServiceProvider.php`):
 
-| CHIP event | Listener | Description |
-|-------|---------|-------------|
-| `purchase.paid` | `HandlePurchasePaid` | Payment completed; syncs status and renewals |
-| `purchase.payment_failure` | `HandlePurchasePaymentFailure` | Payment failed |
-| `purchase.preauthorized` | `HandlePurchasePreauthorized` | Preauthorization complete (setup purchases) |
+| CHIP event type | CHIP event class | Cashier CHIP listener | Description |
+|-----------------|------------------|-----------------------|-------------|
+| `purchase.paid` | `AIArmada\Chip\Events\PurchasePaid` | `HandlePurchasePaid` | Payment completed; saves recurring token, syncs subscription |
+| `purchase.payment_failure` | `AIArmada\Chip\Events\PurchasePaymentFailure` | `HandlePurchasePaymentFailure` | Payment failed; moves subscription to Past Due |
+| `purchase.preauthorized` | `AIArmada\Chip\Events\PurchasePreauthorized` | `HandlePurchasePreauthorized` | Setup purchase; saves recurring token |
 
-The listeners resolve the billable from the purchase's CHIP client ID and
-run `SyncChipPurchaseStatus`, which dispatches the Cashier CHIP events below.
+The full set of CHIP event types is `AIArmada\Chip\Enums\WebhookEventType` (for example
+`purchase.captured`, `payment.refunded`, `purchase.expired`). There are no
+`recurring_token.created` / `recurring_token.deleted` webhook types — token lifecycle rides on the
+purchase events above.
+
+> **info**
+> Event type extraction is `$payload['event_type']`, done by the CHIP package. There is no
+> `handlePurchasePaymentSuccess()` / `handleUnknownEvent()` override point, and no cashier-chip
+> webhook controller to extend.
 
 ## Events Dispatched
 
-Each handled webhook dispatches Laravel events you can listen for:
-
-### Payment Events
+Cashier CHIP dispatches its own Laravel events from `SyncChipPurchaseStatus` and the renewal path:
 
 ```php
 use AIArmada\CashierChip\Events\PaymentSucceeded;
 use AIArmada\CashierChip\Events\PaymentFailed;
 use AIArmada\CashierChip\Events\PaymentRefunded;
+use AIArmada\CashierChip\Events\SubscriptionRenewed;
+use AIArmada\CashierChip\Events\SubscriptionRenewalFailed;
+use AIArmada\CashierChip\Events\SubscriptionCreated;
+use AIArmada\CashierChip\Events\SubscriptionCanceled;
+use AIArmada\CashierChip\Events\SubscriptionResumed;
+use AIArmada\CashierChip\Events\SubscriptionUpdated;
+use AIArmada\CashierChip\Events\SettledPeriodPurchaseConflict;
 
 protected $listen = [
     PaymentSucceeded::class => [
@@ -92,30 +120,33 @@ protected $listen = [
 ];
 ```
 
-### Subscription Events
-
-```php
-use AIArmada\CashierChip\Events\SubscriptionCreated;
-use AIArmada\CashierChip\Events\SubscriptionRenewed;
-use AIArmada\CashierChip\Events\SubscriptionRenewalFailed;
-```
+There is no `WebhookReceived` / `WebhookHandled` / `PaymentMethodAdded` / `PaymentMethodRemoved` /
+`DefaultPaymentMethodChanged` event in this package. Webhook-level events live in
+`aiarmada/chip` (`AIArmada\Chip\Events\WebhookReceived`) and, for the unified cross-gateway layer,
+in `aiarmada/cashier` (`AIArmada\Cashier\Events\WebhookReceived`).
 
 ## Custom Webhook Handling
 
-Cashier CHIP ships no webhook controller to extend. Add custom handling
-with your own listeners on the Cashier CHIP events above (or on the
-underlying `AIArmada\Chip\Events\PurchasePaid` and related CHIP events):
+Listen to the CHIP events (or the Cashier CHIP events) rather than subclassing a controller:
 
 ```php
-use AIArmada\CashierChip\Events\PaymentSucceeded;
+use AIArmada\Chip\Events\PurchasePaid;
+use AIArmada\CashierChip\Billing\Cashier;
 
-class NotifyTeamOfPayment
+class LogPurchasePaid
 {
-    public function handle(PaymentSucceeded $event): void
+    public function handle(PurchasePaid $event): void
     {
-        $purchaseId = $event->purchase['id'];
+        $purchase = $event->purchase;
+        $clientId = $purchase->getClientId();
+        $billable = $clientId ? Cashier::findBillable($clientId) : null;
 
-        $this->notifyTeam($purchaseId);
+        Log::info('CHIP purchase paid', [
+            'purchase_id' => $purchase->id,
+            'client_id' => $clientId,
+            'billable' => $billable?->getKey(),
+            'status' => $purchase->status,
+        ]);
     }
 }
 ```
@@ -126,55 +157,84 @@ To customize the HTTP route itself (path, middleware), configure the
 
 ## Payload Structure
 
-CHIP webhooks contain this structure:
+CHIP webhooks are the purchase object with an `event_type` envelope added, so the event fields
+(`id`, `status`, `recurring_token`, `reference`, `transaction_data`) sit at the top level and the
+amount details live under `purchase`.
 
-All monetary amounts are integers in the smallest currency unit (for MYR, this is cents).
+All monetary amounts are integers in the smallest currency unit (for MYR, this is minor units).
 
 ```json
 {
     "event_type": "purchase.paid",
     "id": "purchase-uuid",
+    "type": "purchase",
+    "brand_id": "brand-uuid",
     "client_id": "client-uuid",
     "status": "paid",
-    "is_recurring_token": true,
+    "is_test": false,
     "recurring_token": "tok_xxxxx",
+    "reference": "Order #123",
+    "checkout_url": "https://pay.chip-in.asia/...",
+    "created_on": 1750000000,
     "purchase": {
-        "total": 10000,
         "currency": "MYR",
+        "total": 10000,
         "products": [
-            {
-                "name": "Product Name",
-                "price": 10000,
-                "quantity": 1
-            }
-        ]
+            { "name": "Product Name", "price": 10000, "quantity": 1 }
+        ],
+        "metadata": {
+            "billable_type": "App\\Models\\User",
+            "billable_id": "uuid",
+            "subscription_type": "default"
+        }
+    },
+    "transaction_data": {
+        "payment_method": "card",
+        "extra": { "masked_pan": "************1234" }
     }
 }
 ```
+
+`subscription_type` inside `purchase.metadata` is what links an inbound payment back to a local
+subscription.
 
 ## Accessing Webhook Data
 
 In your event listener:
 
 ```php
+use AIArmada\CashierChip\Events\PaymentSucceeded;
+
 class HandlePaymentSuccess
 {
     public function handle(PaymentSucceeded $event): void
     {
+        // The purchase array is on $event->purchase, not $event->payload
         $purchase = $event->purchase;
         $billable = $event->billable;
 
-        // Access purchase data
-        $purchaseId = $purchase['id'];
-        $amount = $purchase['purchase']['total'];
-        
-        // Access billable (user)
+        $purchaseId = $purchase['id'] ?? null;
+        $amount = data_get($purchase, 'purchase.total');
+        $currency = data_get($purchase, 'purchase.currency');
+
         if ($billable) {
-            $billable->notify(new PaymentReceived($amount));
+            $billable->notify(new PaymentReceived((int) $amount));
         }
     }
 }
 ```
+
+`PaymentSucceeded`, `PaymentFailed`, and `PaymentRefunded` all carry `public Model $billable` and
+`public array $purchase`, plus a `metadata()` helper. Subscription events
+(`SubscriptionCreated`, `SubscriptionCanceled`, `SubscriptionUpdated`, `SubscriptionResumed`) carry a
+single `Subscription`. `SubscriptionRenewed` carries `($subscription, $payment = null)` and
+`SubscriptionRenewalFailed` carries `($subscription, $reason = '')`.
+
+## Owner Scoping
+
+When `cashier-chip.features.owner.enabled` is true, every listener returns early if no owner is
+resolved. The CHIP package resolves the owner from `brand_id` before dispatching and wraps handling
+in `OwnerContext::withOwner()`.
 
 ## Testing Webhooks
 
@@ -188,7 +248,7 @@ ngrok http 8000
 
 Configure the ngrok URL in your CHIP dashboard.
 
-### Faking Webhooks
+### Faking the Gateway
 
 ```php
 use AIArmada\CashierChip\Billing\Cashier;
@@ -196,21 +256,41 @@ use AIArmada\CashierChip\Billing\Cashier;
 Cashier::fake();
 
 // Now all CHIP API calls are faked
-$user->charge(10000);
-
-// Simulate a webhook
-$response = $this->postJson('/chip/webhooks', [
-    'event_type' => 'purchase.paid',
-    'id' => 'purchase-123',
-    'status' => 'paid',
-]);
-
-$response->assertOk();
+$payment = $user->charge(10000);
 ```
+
+### Simulating a Webhook
+
+Use the CHIP package's simulator, which signs the payload for you:
+
+```php
+use AIArmada\Chip\Enums\WebhookEventType;
+use AIArmada\Chip\Testing\SimulatesWebhooks;
+
+class WebhookTest extends TestCase
+{
+    use SimulatesWebhooks;
+
+    public function test_paid_webhook_syncs_payment(): void
+    {
+        withoutWebhookSignatureVerification();
+
+        $this->postWebhook('/chip/webhooks', [
+            'event_type' => 'purchase.paid',
+            'id' => 'purchase-123',
+            'client_id' => $user->chipId(),
+            'status' => 'paid',
+        ])->assertOk();
+    }
+}
+```
+
+`WebhookSimulator::forEvent(WebhookEventType::PurchasePaid)` and
+`simulatePaidWebhook()` build correctly shaped, signed payloads.
 
 ### Disabling Signature Verification
 
-For testing:
+For testing only:
 
 ```php
 // config/chip.php
@@ -222,68 +302,24 @@ For testing:
 CHIP_WEBHOOK_VERIFY_SIGNATURE=false
 ```
 
-## Webhook Queues
-
-The package listeners run synchronously. For high-volume applications,
-queue your own heavy work from a listener instead of doing it inline:
-
-```php
-use AIArmada\CashierChip\Events\PaymentSucceeded;
-use Illuminate\Contracts\Queue\ShouldQueue;
-
-class ProcessPaymentWebhook implements ShouldQueue
-{
-    public function handle(PaymentSucceeded $event): void
-    {
-        $this->processPayment($event->purchase);
-    }
-}
-```
-
 ## Error Handling
 
-### Listener Failures
+The CHIP controller returns `401` for a missing or invalid signature and `500` when owner
+resolution fails. Anything else that throws propagates so CHIP redelivers. Handle retries by
+checking whether the `purchase_id` has already been applied — see
+[Replay and Idempotency](#replay-and-idempotency).
 
-Throwing from a queued listener releases the job back onto the queue for
-retry with the queue's backoff policy. Log and skip events you cannot
-handle instead of retrying forever:
+## Logging Webhook Activity
 
-```php
-use Illuminate\Database\Eloquent\ModelNotFoundException;
-
-public function handle(PaymentSucceeded $event): void
-{
-    try {
-        $this->processPayment($event->purchase);
-    } catch (ModelNotFoundException $e) {
-        // Unknown local reference: log and skip instead of retrying forever.
-        Log::warning('Webhook reference not found', ['id' => $event->purchase['id']]);
-    }
-}
-```
-
-### Logging
-
-Enable webhook logging from a listener:
-
-```php
-use AIArmada\CashierChip\Events\PaymentSucceeded;
-
-class LogChipWebhook
-{
-    public function handle(PaymentSucceeded $event): void
-    {
-        Log::channel('webhooks')->info('CHIP webhook received', [
-            'id' => $event->purchase['id'] ?? null,
-        ]);
-    }
-}
-```
+`chip.webhooks.log_payloads` (`CHIP_WEBHOOK_LOG_PAYLOADS`, default `false`) logs full payloads to
+`chip.logging.channel`, with sensitive fields masked unless
+`chip.logging.mask_sensitive_data` is disabled.
 
 ## Webhook Security
 
-1. **Always verify signatures** in production
+1. **Leave `chip.webhooks.verify_signature` enabled** — it cannot be turned off in production
 2. Use HTTPS for webhook endpoints
-3. Validate payload structure before processing
-4. Store webhook secret securely (environment variable)
+3. Keep `chip.webhooks.deduplication` enabled for replay protection
+4. Store the CHIP public key through `chip.collect.public_key` or `chip.collect.webhook_keys` so
+   verification does not depend on a live `GET /public_key/` call
 5. Log webhook activity for debugging
