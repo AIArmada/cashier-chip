@@ -40,7 +40,7 @@ trait.
 
 ## 3. Keep CHIP-specific ownership clear
 
-- `aiarmada/cashier-chip` owns the CHIP billable columns and `cashier_chip_*` tables
+- `aiarmada/cashier-chip` owns the `cashier_chip_*` tables and the CHIP billable APIs (customer links live in the `chip_customers` table; no billable columns needed)
 - `aiarmada/chip` still owns the lower-level gateway API integration and purchase primitives
 - `aiarmada/cashier` owns the gateway-agnostic wrapper when you need multi-gateway flows
 
@@ -63,7 +63,6 @@ integration auto-detects that package by default and fails loudly if it is unava
 ```php
 use AIArmada\CashierChip\Actions\CancelChipSubscription;
 use AIArmada\CashierChip\Actions\ChargeChipCustomer;
-use AIArmada\CashierChip\Actions\ClaimRenewalAttempt;
 use AIArmada\CashierChip\Actions\CreateChipSubscription;
 use AIArmada\CashierChip\Actions\RefundChipPayment;
 use AIArmada\CashierChip\Actions\SyncChipPurchaseStatus;
@@ -80,27 +79,7 @@ $subscription = CreateChipSubscription::run($builder, $recurringToken);
 // Cancel a subscription immediately
 CancelChipSubscription::run($subscription);
 
-// Atomically claim a due renewal attempt before charging it
-$attempt = ClaimRenewalAttempt::run($subscriptionId);
-
 // Sync a purchase status from a webhook payload
 SyncChipPurchaseStatus::run($user, $purchaseData, $payload);
 SyncChipPurchaseStatus::make()->syncFailed($user, $purchaseData, $payload);
 ```
-
-## 6. Console commands
-
-`cashier-chip:renew-subscriptions` is the only command the package registers.
-
-```bash
-# Atomically claim and process due CHIP subscription renewals
-php artisan cashier-chip:renew-subscriptions --dry-run
-php artisan cashier-chip:renew-subscriptions --grace-hours=6
-```
-
-> **info**
-> There is no dedicated webhook command. Webhook signature verification is configured entirely
-> through `config/chip.php` (`collect.public_key`, `webhooks.verify_signature`,
-> `webhooks.deduplication`) and is performed by the `aiarmada/chip` package — see
-> `10-webhooks.md`. To inspect resolved config, use Laravel's own
-> `php artisan config:show chip`.

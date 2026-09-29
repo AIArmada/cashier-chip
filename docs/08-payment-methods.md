@@ -89,8 +89,7 @@ return redirect($url);
 
 ### After Webhook
 
-Recurring tokens are saved when the `purchase.paid` or `purchase.preauthorized` webhook arrives with
-a `recurring_token` on the purchase (see [Webhooks](10-webhooks.md)).
+Recurring tokens are automatically saved when webhooks are received for successful payments with `force_recurring = true`.
 
 ## Managing Payment Methods
 
@@ -111,28 +110,25 @@ $user->deletePaymentMethod($recurringToken);
 // This removes the local record only
 ```
 
-There is no public `addPaymentMethod()` helper on the billable API, and there are no dedicated
-payment-method events. Recurring tokens are stored as a side effect of:
+There is no public `addPaymentMethod()` helper on the billable API. Recurring tokens are stored automatically when:
 
-- a `purchase.paid` or `purchase.preauthorized` webhook carrying a `recurring_token`
-- the package syncing tokens back from CHIP for an existing linked customer
+- a successful webhook includes `force_recurring = true`
+- the package syncs tokens back from CHIP for an existing linked customer
 
 ## Payment Method Properties
 
-Each payment method record exposes:
+Each payment method record contains:
 
 | Property | Description |
 |----------|-------------|
-| `id()` | The recurring token string, or `null` when none is stored |
-| `type()` | Payment-method type from CHIP (`card`, `fpx`, …) |
-| `brand()` | Card or payment-method brand from the local record |
-| `lastFour()` | Last 4 digits when the masked PAN is available |
-| `expirationMonth()` | Always `null` — CHIP does not return card expiry |
-| `expirationYear()` | Always `null` — CHIP does not return card expiry |
+| `id()` | The recurring token string |
+| `brand()` | Card or payment-method brand |
+| `lastFour()` | Last 4 digits when provided |
+| `expirationMonth()` | Expiry month when CHIP returns it |
+| `expirationYear()` | Expiry year when CHIP returns it |
 | `isDefault()` | Whether this is the current default method |
-| `delete()` | Removes the local record and revokes the CHIP token |
 
-For Blade or presentation helpers, the wrapper also exposes aliases such as `cardBrand()`, `cardLastFour()`, `cardExpMonth()`, and `cardExpYear()`. `cardExpMonth()`/`cardExpYear()` are aliases of the `null`-returning expiry accessors.
+For Blade or presentation helpers, the wrapper also exposes aliases such as `cardBrand()`, `cardLastFour()`, `cardExpMonth()`, and `cardExpYear()`.
 
 ## Charging with Payment Methods
 
@@ -170,20 +166,19 @@ if ($user->hasDefaultPaymentMethod()) {
 
 ## Database Schema
 
-Payment methods are stored in `cashier_chip_payment_methods` (rename via
-`cashier-chip.database.table_prefix`):
+Payment methods are stored in `cashier_chip_payment_methods`:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | uuid | Primary key |
+| `owner_type` | string nullable | Owner scope morph type when multitenancy is enabled |
+| `owner_id` | uuid nullable | Owner scope morph key when multitenancy is enabled |
 | `billable_id` | uuid | Foreign key to billable |
 | `billable_type` | string | Billable model class |
-| `owner_id` | uuid nullable | Owner scope morph key when multitenancy is enabled |
-| `owner_type` | string nullable | Owner scope morph type when multitenancy is enabled |
 | `recurring_token` | text | CHIP recurring token (encrypted at rest) |
 | `type` | string nullable | Payment-method type |
 | `brand` | string nullable | Card or payment-method brand |
-| `last_four` | string(4) nullable | Last 4 digits |
+| `last_four` | string nullable | Last 4 digits |
 | `is_default` | boolean | Default flag |
 | `metadata` | json nullable | Minimal token identifiers (purchase/token id, method, description) |
 | `created_at` | timestamp | |

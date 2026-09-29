@@ -32,15 +32,11 @@ $user->createOrGetChipCustomer();
 
 ### Auto-Creation
 
-A CHIP customer is created and linked for you only by these two paths:
+Customers are automatically created when you:
 
-- `createSetupPurchase()` (it calls `createAsChipCustomer()` when the billable has no CHIP ID)
-- `CreateChipSubscription` (it calls `createOrGetChipCustomer()` when the billable has no CHIP ID)
-
-> **info**
-> `charge()` and `checkout()` do *not* create a linked CHIP customer. They pass the billable's
-> email/name inline on the purchase instead, so `$user->chipId()` stays `null` after a one-off
-> charge or checkout. Call `createOrGetChipCustomer()` first if you need a persistent customer.
+- Create a checkout session
+- Create a subscription
+- Charge the customer
 
 ## Checking Customer Status
 

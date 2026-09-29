@@ -6,6 +6,7 @@ namespace AIArmada\CashierChip;
 
 use AIArmada\CashierChip\Billing\Cashier;
 use AIArmada\CashierChip\Console\RenewSubscriptionsCommand;
+use AIArmada\CashierChip\Console\WebhookCommand;
 use AIArmada\CashierChip\Contracts\InvoiceRenderer;
 use AIArmada\CashierChip\Contracts\PaymentMethodStoreInterface;
 use AIArmada\CashierChip\Invoices\DocsInvoiceRenderer;
@@ -35,6 +36,7 @@ final class CashierChipServiceProvider extends PackageServiceProvider
             ->discoversMigrations()
             ->hasCommands([
                 RenewSubscriptionsCommand::class,
+                WebhookCommand::class,
             ]);
     }
 

@@ -76,14 +76,11 @@ $checkout = $user->checkout(10000, [
 
 ### Products
 
-Product `price` values are **integer minor units**. They are cast with `(int)`, so a float such as
-`50.00` silently becomes `50` (i.e. RM 0.50).
-
 ```php
 $checkout = $user->checkout(10000, [
     'products' => [
-        ['name' => 'Widget', 'price' => 5000, 'quantity' => 2],
-        ['name' => 'Service', 'price' => 2500, 'quantity' => 1],
+        ['name' => 'Widget', 'price' => 50.00, 'quantity' => 2],
+        ['name' => 'Service', 'price' => 25.00, 'quantity' => 1],
     ],
 ]);
 ```
@@ -202,16 +199,16 @@ This creates a CHIP purchase with:
 
 ## Customizing Checkout Creation
 
-There is no `createCheckout()` hook on the `Billable` trait. `checkout()` forwards straight to
-`Checkout::customer($this)->create($amount, array_merge($sessionOptions, $customerOptions))`, so
-alias the trait method and add your defaults on top:
+### Via Billable Trait
+
+Override the `checkout` method:
 
 ```php
+use AIArmada\CashierChip\Billing\Checkout;
+
 class User extends Authenticatable implements BillableContract
 {
-    use Billable {
-        checkout as protected baseCheckout;
-    }
+    use Billable;
 
     public function checkout(int $amount, array $sessionOptions = [], array $customerOptions = []): Checkout
     {
@@ -221,36 +218,21 @@ class User extends Authenticatable implements BillableContract
             'send_receipt' => true,
         ], $sessionOptions);
 
-        return $this->baseCheckout($amount, $sessionOptions, $customerOptions);
+        return Checkout::create($this, $amount, array_merge($sessionOptions, $customerOptions));
     }
 }
 ```
 
-> **warning**
-> `parent::checkout()` does not work here — `checkout()` comes from the `Billable` trait's
-> `PerformsCharges` concern, not from a parent class. Use trait aliasing (`checkout as
-> protected baseCheckout`) instead.
-
-> **info**
-> Every redirect option you pass (`success_url`, `failure_url`, `cancel_url`, `webhook_url`) must be an
-> absolute `http`/`https` URL, and optionally a host listed in `cashier-chip.redirects.allowed_hosts`.
-> Otherwise `RedirectUrlValidator` throws `InvalidArgumentException`.
-
 ## Error Handling
 
-`checkout()` validates the amount bound and the redirect URLs before touching CHIP:
-
 ```php
-use InvalidArgumentException;
+use AIArmada\Chip\Exceptions\ChipApiException;
 
 try {
     $checkout = $user->checkout(10000);
-} catch (InvalidArgumentException $e) {
+} catch (ChipApiException $e) {
     return back()->withErrors([
         'checkout' => $e->getMessage(),
     ]);
 }
 ```
-
-Thrown cases: amount outside `cashier-chip.billing.max_amount_minor`, a non-absolute or
-disallowed-host redirect URL, and a blank `idempotency_key` on setup purchases.
